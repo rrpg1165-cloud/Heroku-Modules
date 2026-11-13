@@ -1,30 +1,37 @@
-# +----------------------+
-# |  ╦ ╦╔═╗╦═╗╔═╗╦╔═╦ ╦  |
-# |  ╠═╣║╣ ╠╦╝║ ║╠╩╗║ ║  |
-# |  ╩ ╩╚═╝╩╚═╚═╝╩ ╩╚═╝  |
-# +----------------------+
+# +---------------------------+
+# |  ╔═╗╔╦╗╔═╗╦═╗╔═╗═╗ ╦╦╔═╗  |
+# |  ╠═╣ ║ ╠═╣╠╦╝╠═╣╔╩╦╝║╠═╣  |
+# |  ╩ ╩ ╩ ╩ ╩╩╚═╩ ╩╩ ╚═╩╩ ╩  |
+# +---------------------------+
+
 # meta developer: @heroku_mods
-# meta banner: https://raw.githubusercontent.com/rrpg1165-cloud/Heroku-Modules/main/Heroku/Modules/Giveaways/banner.jpg
-# scope: heroku_min 2.2.0
+# meta banner: https://raw.githubusercontent.com/rrpg1165-cloud/Heroku-Modules/main/Heroku/Modules/Giveaways/Ataraxia/banner_ataraxia.jpg
 
 import asyncio
 import html as html_lib
 import logging
 import time
 
-from herokutl.errors import FloodWaitError, RPCError, UserAlreadyParticipantError, UserNotParticipantError
-from herokutl.tl.functions.channels import GetParticipantRequest, JoinChannelRequest, LeaveChannelRequest
-from herokutl.tl.functions.messages import GetDialogFiltersRequest, UpdateDialogFilterRequest
-from herokutl.tl.functions.payments import GetGiveawayInfoRequest
-from herokutl.tl.types import (
+from ataraxiatl.errors import (
+    FloodWaitError,
+    PremiumAccountRequiredError,
+    RPCError,
+    UserAlreadyParticipantError,
+    UserNotParticipantError,
+)
+from ataraxiatl.tl.functions.channels import GetParticipantRequest, JoinChannelRequest, LeaveChannelRequest
+from ataraxiatl.tl.functions.messages import GetDialogFiltersRequest, UpdateDialogFilterRequest
+from ataraxiatl.tl.functions.payments import GetGiveawayInfoRequest
+from ataraxiatl.tl.types import (
     DialogFilter,
     InputPeerSelf,
+    InputRichMessageHTML,
     Message,
     MessageMediaGiveaway,
     PeerChannel,
     TextWithEntities,
 )
-from herokutl.tl.types.payments import GiveawayInfoResults
+from ataraxiatl.tl.types.payments import GiveawayInfoResults
 
 from .. import loader, utils
 from ..inline.types import InlineCall
@@ -34,9 +41,9 @@ logger = logging.getLogger(__name__)
 FOLDER_NAME = "Розыгрыши"
 TOPIC_TITLE = "Giveaways"
 MAX_ATTEMPTS = 3
-PROGRESS_EVERY = 2
 FAIL_LIMIT = 5
 RESULT_GIVE_UP = 3 * 86400
+PROGRESS_EVERY = 2
 
 # Premium emoji from the owner's packs: name -> (document id, alt)
 EMOJI = {
@@ -57,7 +64,7 @@ EMOJI = {
 
 @loader.tds
 class GiveawaysMod(loader.Module):
-    """Joins Telegram giveaways automatically, keeps their history and leaves sponsor channels afterwards"""
+    """Joins Telegram giveaways automatically and leaves sponsor channels afterwards"""
 
     strings = {
         "name": "Giveaways",
@@ -77,8 +84,6 @@ class GiveawaysMod(loader.Module):
         "scan_results": "Found: {}",
         "btn_stop": "Stop",
         "btn_close": "Close",
-        "limiter_title": "Joining channels is blocked",
-        "limiter_hint": "APILimiter forbids joinChannel, so giveaways cannot be joined. Remove joinChannel from forbidden_methods in .config APILimiter",
         "st_title": "Active giveaways",
         "st_count": "Total: <b>{}</b>",
         "st_empty": "No active giveaways",
@@ -90,10 +95,10 @@ class GiveawaysMod(loader.Module):
         "stat_left": "Left",
         "stat_active": "Active giveaways",
         "stat_wait": "Awaiting results",
-            "prize_stars": "{} stars",
+        "prize_stars": "{} stars",
         "prize_premium": "Premium for {} mo.",
         "prize_unknown": "Unknown prize",
-                            "new_title": "Joined a giveaway",
+        "new_title": "Joined a giveaway",
         "fail_title": "Participation not confirmed",
         "win_title": "You won a giveaway",
         "l_prize": "Prize: {}",
@@ -117,7 +122,7 @@ class GiveawaysMod(loader.Module):
         "_cfg_scan": "How many latest messages of each chat .gwscan checks",
         "_cfg_leave": "Leave sponsor channels after the giveaway ends",
         "_cfg_leave_hours": "Hours to wait after the end before leaving",
-        }
+    }
 
     strings_ru = {
         "gw_on": "Авто-участие включено",
@@ -136,8 +141,6 @@ class GiveawaysMod(loader.Module):
         "scan_results": "Найдено: {}",
         "btn_stop": "Остановить",
         "btn_close": "Закрыть",
-        "limiter_title": "Подписка на каналы запрещена",
-        "limiter_hint": "APILimiter запрещает joinChannel, поэтому участвовать в розыгрышах нельзя. Убери joinChannel из forbidden_methods в .config APILimiter",
         "st_title": "Активные розыгрыши",
         "st_count": "Всего: <b>{}</b>",
         "st_empty": "Нет активных розыгрышей",
@@ -178,265 +181,100 @@ class GiveawaysMod(loader.Module):
         "_cfg_leave_hours": "Сколько часов ждать после конца перед выходом",
     }
 
-    strings_uk = {
-        "gw_on": "Авто-участь увімкнено",
-        "gw_off": "Авто-участь вимкнено",
-        "gw_on_hint": "Нові розіграші обробляються автоматично",
-        "gw_off_hint": "Нові розіграші ігноруються",
-        "scan_run": "Скануюю історію чатів",
-        "scan_now": "Зараз: <b>{}</b>",
-        "scan_loading": "завантаження списку чатів",
-        "scan_busy": "Сканування вже триває",
-        "scan_done": "Сканування завершено",
-        "scan_stopped": "Сканування зупинено",
-        "scan_stopping": "Зупиняю після поточного чату",
-        "scan_chats": "Перевірено чатів",
-        "scan_found": "Нових розіграшів",
-        "scan_results": "Знайдено: {}",
-        "btn_stop": "Зупинити",
-        "btn_close": "Закрити",
-        "limiter_title": "Підписку на канали заборонено",
-        "limiter_hint": "APILimiter забороняє joinChannel, тому брати участь у розіграшах не можна. Прибери joinChannel із forbidden_methods у .config APILimiter",
-        "st_title": "Активні розіграші",
-        "st_count": "Усього: <b>{}</b>",
-        "st_empty": "Немає активних розіграшів",
-        "stats_title": "Статистика",
-        "stat_joined": "Брав участь",
-        "stat_wins": "Перемог",
-        "stat_total": "Підписався на каналів усього",
-        "stat_now": "Зараз у підписках",
-        "stat_left": "Вийшов із каналів",
-        "stat_active": "Активних розіграшів",
-        "stat_wait": "Чекають на підсумки",
-        "prize_stars": "{} зірок",
-        "prize_premium": "Преміум на {} міс.",
-        "prize_unknown": "Невідомий приз",
-        "new_title": "Беру участь у розіграші",
-        "fail_title": "Участь не підтверджено",
-        "win_title": "Ти виграв розіграш",
-        "l_prize": "Приз: {}",
-        "l_until": "Кінець: {}",
-        "l_sponsors": "Каналів-спонсорів: {}, нових підписок: {}",
-        "l_reason": "Причина: {}",
-        "l_open": "Відкрити допис",
-        "r_early": "Розіграш лише для нових підписників, а акаунт був підписаний раніше ({}).",
-        "r_admin": "Один зі спонсорських каналів заборонив участь цьому акаунту.",
-        "r_country": "Розіграш недоступний для країни {}.",
-        "r_preparing": "Telegram уже готує результати, вступати пізно.",
-        "r_new_only": "Telegram не підтвердив участь. Схоже, розіграш лише для нових підписників.",
-        "r_generic": "Telegram не підтвердив участь після підписки на спонсорів.",
-        "_cfg_target": "У яких розіграшах брати участь: лише Premium, лише Stars або в усіх",
-        "_cfg_bot": "Надсилати сповіщення через інлайн-бота",
-        "_cfg_notify": "ID чату або користувача для сповіщень (0 - топік Giveaways у чаті логів)",
-        "_cfg_mute": "Вимикати звук у спонсорських каналах після підписки",
-        "_cfg_archive": "Одразу надсилати спонсорські канали в архів після підписки",
-        "_cfg_folder": "Автоматично створювати папку зі спонсорськими каналами",
-        "_cfg_delay": "Затримка між підписками в секундах",
-        "_cfg_scan": "Скільки останніх повідомлень кожного чату перевіряє .gwscan",
-        "_cfg_leave": "Виходити зі спонсорських каналів після кінця розіграшу",
-        "_cfg_leave_hours": "Скільки годин чекати після кінця перед виходом",
-    }
-
-    strings_de = {
-        "gw_on": "Automatische Teilnahme aktiviert",
-        "gw_off": "Automatische Teilnahme deaktiviert",
-        "gw_on_hint": "Neue Gewinnspiele werden automatisch bearbeitet",
-        "gw_off_hint": "Neue Gewinnspiele werden ignoriert",
-        "scan_run": "Chatverlauf wird gescannt",
-        "scan_now": "Aktuell: <b>{}</b>",
-        "scan_loading": "Chatliste wird geladen",
-        "scan_busy": "Ein Scan läuft bereits",
-        "scan_done": "Scan abgeschlossen",
-        "scan_stopped": "Scan gestoppt",
-        "scan_stopping": "Stoppe nach dem aktuellen Chat",
-        "scan_chats": "Chats geprüft",
-        "scan_found": "Neue Gewinnspiele",
-        "scan_results": "Gefunden: {}",
-        "btn_stop": "Stoppen",
-        "btn_close": "Schließen",
-        "limiter_title": "Das Abonnieren von Kanälen ist blockiert",
-        "limiter_hint": "APILimiter verbietet joinChannel, daher ist die Teilnahme an Gewinnspielen nicht möglich. Entferne joinChannel aus forbidden_methods in .config APILimiter",
-        "st_title": "Aktive Gewinnspiele",
-        "st_count": "Insgesamt: <b>{}</b>",
-        "st_empty": "Keine aktiven Gewinnspiele",
-        "stats_title": "Statistik",
-        "stat_joined": "Teilgenommen",
-        "stat_wins": "Gewinne",
-        "stat_total": "Kanäle insgesamt abonniert",
-        "stat_now": "Aktuell abonniert",
-        "stat_left": "Kanäle verlassen",
-        "stat_active": "Aktive Gewinnspiele",
-        "stat_wait": "Warten auf Ergebnisse",
-        "prize_stars": "{} Sterne",
-        "prize_premium": "Premium für {} Mon.",
-        "prize_unknown": "Unbekannter Preis",
-        "new_title": "Nehme an einem Gewinnspiel teil",
-        "fail_title": "Teilnahme nicht bestätigt",
-        "win_title": "Du hast ein Gewinnspiel gewonnen",
-        "l_prize": "Preis: {}",
-        "l_until": "Ende: {}",
-        "l_sponsors": "Sponsorkanäle: {}, neue Abonnements: {}",
-        "l_reason": "Grund: {}",
-        "l_open": "Beitrag öffnen",
-        "r_early": "Das Gewinnspiel gilt nur für neue Abonnenten, aber das Konto war früher abonniert ({}).",
-        "r_admin": "Ein Sponsorkanal erlaubt diesem Konto die Teilnahme nicht.",
-        "r_country": "Das Gewinnspiel ist im Land {} nicht verfügbar.",
-        "r_preparing": "Telegram bereitet bereits die Ergebnisse vor, zum Beitreten ist es zu spät.",
-        "r_new_only": "Telegram hat die Teilnahme nicht bestätigt. Vermutlich gilt das Gewinnspiel nur für neue Abonnenten.",
-        "r_generic": "Telegram hat die Teilnahme nach dem Abonnieren der Sponsoren nicht bestätigt.",
-        "_cfg_target": "An welchen Gewinnspielen teilnehmen: nur Premium, nur Stars oder an allen",
-        "_cfg_bot": "Benachrichtigungen über den Inline-Bot senden",
-        "_cfg_notify": "Chat- oder Nutzer-ID für Benachrichtigungen (0 - Thema Giveaways im Log-Chat)",
-        "_cfg_mute": "Sponsorkanäle nach dem Abonnieren stummschalten",
-        "_cfg_archive": "Sponsorkanäle nach dem Abonnieren sofort archivieren",
-        "_cfg_folder": "Ordner mit Sponsorkanälen automatisch erstellen",
-        "_cfg_delay": "Verzögerung zwischen Abonnements in Sekunden",
-        "_cfg_scan": "Wie viele letzte Nachrichten jedes Chats .gwscan prüft",
-        "_cfg_leave": "Sponsorkanäle nach dem Ende des Gewinnspiels verlassen",
-        "_cfg_leave_hours": "Wie viele Stunden nach dem Ende vor dem Verlassen gewartet wird",
-    }
-
-    strings_ja = {
-        "gw_on": "自動参加を有効にしました",
-        "gw_off": "自動参加を無効にしました",
-        "gw_on_hint": "新しいプレゼント企画は自動で処理されます",
-        "gw_off_hint": "新しいプレゼント企画は無視されます",
-        "scan_run": "チャット履歴をスキャン中",
-        "scan_now": "現在: <b>{}</b>",
-        "scan_loading": "チャット一覧を読み込み中",
-        "scan_busy": "スキャンはすでに実行中です",
-        "scan_done": "スキャンが完了しました",
-        "scan_stopped": "スキャンを停止しました",
-        "scan_stopping": "現在のチャットの後で停止します",
-        "scan_chats": "確認したチャット",
-        "scan_found": "新しいプレゼント企画",
-        "scan_results": "見つかった数: {}",
-        "btn_stop": "停止",
-        "btn_close": "閉じる",
-        "limiter_title": "チャンネル登録がブロックされています",
-        "limiter_hint": "APILimiter が joinChannel を禁止しているため、プレゼント企画に参加できません。.config APILimiter の forbidden_methods から joinChannel を外してください",
-        "st_title": "進行中のプレゼント企画",
-        "st_count": "合計: <b>{}</b>",
-        "st_empty": "進行中のプレゼント企画はありません",
-        "stats_title": "統計",
-        "stat_joined": "参加数",
-        "stat_wins": "当選数",
-        "stat_total": "登録したチャンネルの合計",
-        "stat_now": "現在登録中",
-        "stat_left": "退出したチャンネル",
-        "stat_active": "進行中の企画",
-        "stat_wait": "結果待ち",
-        "prize_stars": "{} スター",
-        "prize_premium": "プレミアム {} か月",
-        "prize_unknown": "不明な賞品",
-        "new_title": "プレゼント企画に参加しました",
-        "fail_title": "参加を確認できませんでした",
-        "win_title": "プレゼント企画に当選しました",
-        "l_prize": "賞品: {}",
-        "l_until": "終了: {}",
-        "l_sponsors": "スポンサーチャンネル: {}、新規登録: {}",
-        "l_reason": "理由: {}",
-        "l_open": "投稿を開く",
-        "r_early": "この企画は新規登録者限定ですが、このアカウントは以前から登録していました ({})。",
-        "r_admin": "スポンサーチャンネルの1つがこのアカウントの参加を許可していません。",
-        "r_country": "この企画は {} では利用できません。",
-        "r_preparing": "Telegram はすでに結果を準備中のため、参加できません。",
-        "r_new_only": "Telegram が参加を確認しませんでした。新規登録者限定の企画の可能性があります。",
-        "r_generic": "スポンサーに登録した後も Telegram が参加を確認しませんでした。",
-        "_cfg_target": "参加する企画: Premium のみ、Stars のみ、またはすべて",
-        "_cfg_bot": "インラインボット経由で通知を送る",
-        "_cfg_notify": "通知先のチャットまたはユーザー ID (0 はログチャットの Giveaways トピック)",
-        "_cfg_mute": "登録後にスポンサーチャンネルをミュートする",
-        "_cfg_archive": "登録後にスポンサーチャンネルをすぐアーカイブする",
-        "_cfg_folder": "スポンサーチャンネルのフォルダを自動作成する",
-        "_cfg_delay": "登録間の待ち時間 (秒)",
-        "_cfg_scan": ".gwscan が各チャットで確認する最新メッセージ数",
-        "_cfg_leave": "企画の終了後にスポンサーチャンネルから退出する",
-        "_cfg_leave_hours": "終了後、退出までに待つ時間 (時間)",
-    }
-
     def __init__(self):
         self.config = loader.ModuleConfig(
             loader.ConfigValue(
                 "target_giveaways",
                 "Premium+Stars",
-                lambda: self.strings["_cfg_target"],
+                lambda: self.strings("_cfg_target"),
                 validator=loader.validators.Choice(["Premium", "Stars", "Premium+Stars"]),
             ),
             loader.ConfigValue(
                 "send_via_bot",
                 True,
-                lambda: self.strings["_cfg_bot"],
+                lambda: self.strings("_cfg_bot"),
                 validator=loader.validators.Boolean(),
             ),
             loader.ConfigValue(
                 "notify_user_id",
                 0,
-                lambda: self.strings["_cfg_notify"],
+                lambda: self.strings("_cfg_notify"),
                 validator=loader.validators.Integer(),
             ),
             loader.ConfigValue(
                 "mute_channels",
                 True,
-                lambda: self.strings["_cfg_mute"],
+                lambda: self.strings("_cfg_mute"),
                 validator=loader.validators.Boolean(),
             ),
             loader.ConfigValue(
                 "archive_channels",
                 True,
-                lambda: self.strings["_cfg_archive"],
+                lambda: self.strings("_cfg_archive"),
                 validator=loader.validators.Boolean(),
             ),
             loader.ConfigValue(
                 "auto_create_folder",
                 True,
-                lambda: self.strings["_cfg_folder"],
+                lambda: self.strings("_cfg_folder"),
                 validator=loader.validators.Boolean(),
             ),
             loader.ConfigValue(
                 "join_delay",
                 2.5,
-                lambda: self.strings["_cfg_delay"],
+                lambda: self.strings("_cfg_delay"),
                 validator=loader.validators.Float(minimum=0.5),
             ),
             loader.ConfigValue(
                 "scan_history_limit",
                 200,
-                lambda: self.strings["_cfg_scan"],
+                lambda: self.strings("_cfg_scan"),
                 validator=loader.validators.Integer(minimum=10, maximum=1000),
             ),
             loader.ConfigValue(
                 "auto_leave",
                 True,
-                lambda: self.strings["_cfg_leave"],
+                lambda: self.strings("_cfg_leave"),
                 validator=loader.validators.Boolean(),
             ),
             loader.ConfigValue(
                 "leave_after_hours",
                 24,
-                lambda: self.strings["_cfg_leave_hours"],
+                lambda: self.strings("_cfg_leave_hours"),
                 validator=loader.validators.Integer(minimum=0, maximum=720),
             ),
         )
 
     async def client_ready(self):
         self._lock = asyncio.Lock()
+        self._tasks = set()
         self._scanning = False
         self._scan_halt = False
-        self._topic = None
-        self._scan_task = None
+        self._scan_closed = False
         self._scan_msg = None
-        self._scan_state = None
+        self._scan_sig = None
+        self._edit_errors = 0
+        self._topic = None
         self._retry = {}
         self._giveaways = self.get("giveaways", {})
         self._channels = self.get("channels", {})
         self._skip = dict.fromkeys(self.get("skipped", []))
         self._folder_id = self.get("folder_id", None)
 
+    async def on_unload(self):
+        for task in list(self._tasks):
+            task.cancel()
+
+    def _spawn(self, coro):
+        task = asyncio.ensure_future(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return task
+
     # ---------- emoji, rendering, answers ----------
 
     def _premium(self) -> bool:
-        return getattr(self._client.heroku_me, "premium", False) is True
+        return getattr(self._client.ataraxia_me, "premium", False) is True
 
     def _e(self, name: str) -> str:
         emoji_id, alt = EMOJI[name]
@@ -444,30 +282,12 @@ class GiveawaysMod(loader.Module):
             return f'<tg-emoji emoji-id="{emoji_id}">{alt}</tg-emoji>'
         return alt
 
-    def _when(self, ts: int, rich: bool) -> str:
-        text = time.strftime("%d.%m %H:%M UTC", time.gmtime(ts))
-        if rich:
-            return f'<tg-time unix="{int(ts)}" format="dt">{text}</tg-time>'
-        return text
+    @staticmethod
+    def _when(ts: int) -> str:
+        return time.strftime("%d.%m %H:%M UTC", time.gmtime(ts))
 
-    def _join_blocked(self) -> bool:
-        limiter = self.lookup("APILimiter")
-        if limiter is None:
-            return False
-        try:
-            return "joinChannel" in limiter.config["forbidden_methods"]
-        except Exception as e:
-            logger.debug("APILimiter config is unreadable: %s", e)
-            return False
-
-    def _limiter_card(self, rich: bool) -> dict:
-        return {
-            "emoji": "warn",
-            "title": self.strings["limiter_title"],
-            "lines": [utils.escape_html(self.strings["limiter_hint"])],
-        }
-
-    def _a(self, link: str, text: str) -> str:
+    @staticmethod
+    def _a(link: str, text: str) -> str:
         text = utils.escape_html(text)
         if not link:
             return text
@@ -490,11 +310,6 @@ class GiveawaysMod(loader.Module):
             for summary, entries in sections:
                 body = "".join(f"<li>{item}</li>" for item in entries)
                 out.append(f"<details><summary>{summary}</summary><ol>{body}</ol></details>")
-            for label, data, style in card.get("buttons", []):
-                out.append(
-                    f'<tg-button-row><tg-button type="callback_data" data="{data}" style="{style}">'
-                    f"{label}</tg-button></tg-button-row>"
-                )
             return "".join(out)
         out = [f"<b>{head}</b>"] + lines
         out += [f"{k}: <code>{v}</code>" for k, v in rows]
@@ -504,16 +319,14 @@ class GiveawaysMod(loader.Module):
             out.append(f"<b>{summary}</b>\n<blockquote expandable>{numbered}</blockquote>")
         return "\n".join(out)
 
-    async def _say(self, message, build):
-        """Answer with a Rich message and fall back to plain HTML"""
-        try:
-            result = await utils.answer(message, "", rich_message=self._render(build(True), True))
-        except RPCError as e:
-            logger.warning("Rich message was rejected: %s", e)
-            result = None
-        if result:
-            return result
-        return await utils.answer(message, self._render(build(False), False))
+    async def _say(self, message, card: dict):
+        """Answer with a Rich message (Premium only) and fall back to plain HTML"""
+        if self._premium():
+            try:
+                return await utils.answer(message, rich=InputRichMessageHTML(html=self._render(card, True)))
+            except (PremiumAccountRequiredError, RPCError) as e:
+                logger.warning("Rich message was rejected: %s", e)
+        return await utils.answer(message, self._render(card, False))
 
     async def _log_topic(self):
         """Returns (log chat id, topic id) of the Giveaways topic or None"""
@@ -529,22 +342,22 @@ class GiveawaysMod(loader.Module):
             return None
         return self._topic
 
-    async def _notify(self, build):
+    async def _notify(self, card: dict):
         chat, topic = self.config["notify_user_id"], None
         if not chat:
             target = await self._log_topic()
             chat, topic = target if target else (self.tg_id, None)
-        plain = self._render(build(False), False)
+        text = self._render(card, False)
         if self.config["send_via_bot"] and self.inline.init_complete:
             try:
-                await self.inline.bot.send_rich_message(
-                    chat, self._render(build(True), True), message_thread_id=topic
+                await self.inline.bot.send_message(
+                    chat, text, message_thread_id=topic, disable_web_page_preview=True
                 )
                 return
             except Exception as e:
                 logger.warning("Bot notification failed: %s", e)
         try:
-            await self.client.send_message(chat, plain, reply_to=topic, link_preview=False)
+            await self.client.send_message(chat, text, reply_to=topic, link_preview=False)
         except Exception as e:
             logger.warning("Notification failed: %s", e)
 
@@ -561,14 +374,14 @@ class GiveawaysMod(loader.Module):
         emoji, prize = self._prize(rec)
         return self.strings["l_prize"].format(f"{self._e(emoji)} {utils.escape_html(prize)}")
 
-    def _card_new(self, rec: dict, new_count: int, rich: bool) -> dict:
+    def _card_new(self, rec: dict, new_count: int) -> dict:
         s = self.strings
         return {
             "emoji": "ok",
             "title": s["new_title"],
             "lines": [
                 self._prize_line(rec),
-                s["l_until"].format(self._when(rec["until"], rich)),
+                s["l_until"].format(self._when(rec["until"])),
                 s["l_sponsors"].format(len(rec["channels"]), new_count),
                 self._a(rec["link"], s["l_open"]),
             ],
@@ -594,9 +407,9 @@ class GiveawaysMod(loader.Module):
             "lines": [self._prize_line(rec), self._a(rec["link"], s["l_open"])],
         }
 
-    def _item(self, rec: dict, rich: bool) -> str:
+    def _item(self, rec: dict) -> str:
         emoji, prize = self._prize(rec)
-        return f"{self._e(emoji)} {self._a(rec['link'], prize)}, {self._when(rec['until'], rich)}"
+        return f"{self._e(emoji)} {self._a(rec['link'], prize)}, {self._when(rec['until'])}"
 
     # ---------- storage ----------
 
@@ -615,7 +428,8 @@ class GiveawaysMod(loader.Module):
 
     # ---------- telegram helpers ----------
 
-    def _fingerprint(self, media) -> str:
+    @staticmethod
+    def _fingerprint(media) -> str:
         channels = sorted(int(c) for c in (getattr(media, "channels", None) or []))
         until = int(media.until_date.timestamp()) if getattr(media, "until_date", None) else 0
         countries = sorted(getattr(media, "countries_iso2", None) or [])
@@ -676,7 +490,7 @@ class GiveawaysMod(loader.Module):
                 logger.warning("Join failed: %s", e)
                 return "failed"
         if not await self._is_member(entity):
-            logger.warning("Join had no effect (check APILimiter settings): %s", getattr(entity, "id", entity))
+            logger.warning("Join had no effect: %s", getattr(entity, "id", entity))
             return "failed"
         return "joined"
 
@@ -795,7 +609,7 @@ class GiveawaysMod(loader.Module):
             except Exception as e:
                 logger.warning("Retry of giveaway %s failed: %s", uid, e)
 
-        self._retry[uid] = self.create_task(run())
+        self._retry[uid] = self._spawn(run())
 
     async def _process(self, message, media, attempt: int = 1) -> bool:
         async with self._lock:
@@ -881,11 +695,11 @@ class GiveawaysMod(loader.Module):
         if verdict == "ok":
             self._giveaways[uid] = rec
             self._save_giveaways()
-            await self._notify(lambda rich: self._card_new(rec, new_count, rich))
+            await self._notify(self._card_new(rec, new_count))
             return True
         if verdict == "final" or attempt >= MAX_ATTEMPTS:
             self._skip_add(uid)
-            await self._notify(lambda rich: self._card_fail(rec, reason))
+            await self._notify(self._card_fail(rec, reason))
         else:
             self._retry_later(chat_id, message.id, 45, attempt + 1)
         return False
@@ -919,7 +733,7 @@ class GiveawaysMod(loader.Module):
             rec["prize_stars"] = int(getattr(info, "stars_prize", 0) or 0)
             changed = True
             if info.winner:
-                await self._notify(lambda rich, rec=rec: self._card_win(rec))
+                await self._notify(self._card_win(rec))
             await asyncio.sleep(1)
         if changed:
             self._save_giveaways()
@@ -951,47 +765,32 @@ class GiveawaysMod(loader.Module):
 
     # ---------- commands ----------
 
-    @loader.command(
-        ru_doc="включить или выключить авто-участие в розыгрышах",
-        uk_doc="увімкнути або вимкнути авто-участь у розіграшах",
-        de_doc="Automatische Teilnahme an Gewinnspielen ein- oder ausschalten",
-        ja_doc="プレゼント企画への自動参加を切り替える",
-    )
+    @loader.command(ru_doc="включить или выключить авто-участие в розыгрышах")
     async def gw(self, message: Message):
         """Toggle auto participation in giveaways"""
         enabled = not self.get("enabled", False)
-        if enabled and self._join_blocked():
-            return await self._say(message, self._limiter_card)
         self.set("enabled", enabled)
         s = self.strings
         await self._say(
             message,
-            lambda rich: {
+            {
                 "emoji": "on" if enabled else "off",
                 "title": s["gw_on"] if enabled else s["gw_off"],
                 "lines": [s["gw_on_hint"] if enabled else s["gw_off_hint"]],
             },
         )
 
-    @loader.command(
-        ru_doc="проверить историю чатов и найти пропущенные розыгрыши",
-        uk_doc="перевірити історію чатів і знайти пропущені розіграші",
-        de_doc="Chatverlauf nach verpassten Gewinnspielen durchsuchen",
-        ja_doc="チャット履歴から見逃した企画を探す",
-    )
+    @loader.command(ru_doc="проверить историю чатов и найти пропущенные розыгрыши")
     async def gwscan(self, message: Message):
         """Scan chat history for missed giveaways"""
-        if self._join_blocked():
-            return await self._say(message, self._limiter_card)
         if self._scanning:
-            return await self._say(message, lambda rich: {"emoji": "warn", "title": self.strings["scan_busy"]})
+            return await self._say(message, {"emoji": "warn", "title": self.strings["scan_busy"]})
         self._scanning = True
         self._scan_halt = False
-        self._edit_errors = 0
-        self._scan_rich = False
-        self._scan_last = None
         self._scan_closed = False
-        self._scan_task = self.create_task(self._scan_job(message))
+        self._scan_sig = None
+        self._edit_errors = 0
+        self._spawn(self._scan_job(message))
 
     async def _scan_job(self, message):
         try:
@@ -1001,127 +800,88 @@ class GiveawaysMod(loader.Module):
         finally:
             self._scanning = False
             self._scan_msg = None
-            self._scan_state = None
 
-    async def _stop_scan(self, call):
+    async def _stop_scan(self, call: InlineCall):
         self._scan_halt = True
         await call.answer(self.strings["scan_stopping"])
 
-    def _scan_card(self, state: dict, phase: str):
-        s = self.strings
-        emoji = {"run": "search", "done": "ok", "stopped": "warn"}[phase]
-        title = s[{"run": "scan_run", "done": "scan_done", "stopped": "scan_stopped"}[phase]]
-
-        def build(rich: bool) -> dict:
-            checked, total = state["checked"], state["total"]
-            filled = 0 if not total else int(10 * checked / total)
-            percent = 0 if not total else int(100 * checked / total)
-            found = state["found"]
-            card = {
-                "emoji": emoji,
-                "title": title,
-                "lines": [f"<code>{'█' * filled}{'░' * (10 - filled)} {percent}%</code>"],
-                "rows": [(s["scan_chats"], f"{checked} / {total}"), (s["scan_found"], str(len(found)))],
-            }
-            if phase == "run" and state["current"]:
-                card["lines"].append(s["scan_now"].format(utils.escape_html(state["current"])))
-            if phase == "run":
-                card["buttons"] = [(s["btn_stop"], "gw:stop", "primary")]
-            if found:
-                shown = found[-20:]
-                card["sections"] = [
-                    (s["scan_results"].format(len(found)), [self._item(r, rich) for r in shown])
-                ]
-            return card
-
-        return build
-
-    async def _close_scan(self, call):
+    async def _close_scan(self, call: InlineCall):
         self._scan_halt = True
         self._scan_closed = True
         await call.delete()
 
-    def _close_button(self):
-        return {"text": self.strings["btn_close"], "callback": self._close_scan, "style": "danger"}
+    def _scan_card(self, state: dict, phase: str) -> dict:
+        s = self.strings
+        emoji = {"run": "search", "done": "ok", "stopped": "warn"}[phase]
+        title = s[{"run": "scan_run", "done": "scan_done", "stopped": "scan_stopped"}[phase]]
+        checked, total = state["checked"], state["total"]
+        filled = 0 if not total else int(10 * checked / total)
+        percent = 0 if not total else int(100 * checked / total)
+        found = state["found"]
+        card = {
+            "emoji": emoji,
+            "title": title,
+            "lines": [f"<code>[{'=' * filled}{'-' * (10 - filled)}] {percent}%</code>"],
+            "rows": [(s["scan_chats"], f"{checked} / {total}"), (s["scan_found"], str(len(found)))],
+        }
+        if phase == "run" and state["current"]:
+            card["lines"].append(s["scan_now"].format(utils.escape_html(state["current"])))
+        if found:
+            card["sections"] = [(s["scan_results"].format(len(found)), [self._item(r) for r in found[-20:]])]
+        return card
 
-    def _progress_markup(self):
-        return [
-            [{"text": self.strings["btn_stop"], "callback": self._stop_scan, "style": "primary"}],
-            [self._close_button()],
-        ]
+    def _scan_screen(self, state: dict, phase: str):
+        screen = self.inline.screen()
+        screen.add(self._render(self._scan_card(state, phase), True))
+        if phase == "run":
+            stop = screen.tap(self.strings["btn_stop"], self._stop_scan, style="primary")
+            screen.add(f"<tg-button-row>{stop}</tg-button-row>")
+        return screen
 
-    async def _scan_form(self, message, build):
-        """Rich progress form, plain inline form if Telegram rejects rich"""
+    def _close_markup(self):
+        return [[{"text": self.strings["btn_close"], "callback": self._close_scan, "style": "danger"}]]
+
+    async def _scan_form(self, message, state: dict):
         if not self.inline.init_complete:
             return None
         try:
             form = await self.inline.form(
-                "Rich message",
+                "",
                 message,
-                rich_message=self._render(build(True), True),
-                reply_markup=[[self._close_button()]],
+                rich_html=self._scan_screen(state, "run"),
+                reply_markup=self._close_markup(),
                 ttl=86400,
                 silent=True,
-            )
-            if form:
-                self._scan_rich = True
-                return form
-        except Exception as e:
-            logger.warning("Rich scan form failed: %s", e)
-        try:
-            form = await self.inline.form(
-                self._render(build(False), False),
-                message,
-                reply_markup=self._progress_markup(),
-                ttl=86400,
-                silent=True,
+                quiet=True,
             )
         except Exception as e:
             logger.warning("Scan form failed: %s", e)
             return None
         return form or None
 
-    async def _scan_edit(self, form, build):
+    async def _scan_edit(self, form, state: dict):
+        sig = (state["checked"], state["total"], state["current"], len(state["found"]))
+        if sig == self._scan_sig:
+            return
+        self._scan_sig = sig
         try:
-            if self._scan_rich:
-                html = self._render(build(True), True)
-                if html == self._scan_last:
-                    return
-                self._scan_last = html
-                ok = await form.edit(rich_message=html, reply_markup=[[self._close_button()]])
-            else:
-                ok = await form.edit(self._render(build(False), False), reply_markup=self._progress_markup())
-            if ok is False:
-                self._scan_last = None
-                self._edit_errors = getattr(self, "_edit_errors", 0) + 1
-                if self._edit_errors <= 3:
-                    logger.warning(
-                        "Scan progress edit returned False (inline_message_id=%s)",
-                        getattr(form, "inline_message_id", None),
-                    )
+            await form.edit(None, rich_html=self._scan_screen(state, "run"), reply_markup=self._close_markup())
         except Exception:
-            self._edit_errors = getattr(self, "_edit_errors", 0) + 1
+            self._scan_sig = None
+            self._edit_errors += 1
             if self._edit_errors <= 3:
                 logger.exception("Scan progress could not be edited")
-
-    @loader.callback_handler()
-    async def gw_callback_handler(self, call: InlineCall):
-        if call.data != "gw:stop":
-            return
-        self._scan_halt = True
-        await call.answer(self.strings["scan_stopping"])
 
     async def _scan_ticker(self, state: dict):
         while True:
             if self._scan_msg:
-                await self._scan_edit(self._scan_msg, self._scan_card(state, "run"))
+                await self._scan_edit(self._scan_msg, state)
             await asyncio.sleep(PROGRESS_EVERY)
 
     async def _run_scan(self, message):
         state = {"checked": 0, "total": 0, "current": self.strings["scan_loading"], "found": []}
-        self._scan_state = state
-        self._scan_msg = await self._scan_form(message, self._scan_card(state, "run"))
-        ticker = self.create_task(self._scan_ticker(state))
+        self._scan_msg = await self._scan_form(message, state)
+        ticker = self._spawn(self._scan_ticker(state))
         dialogs = []
         async for dialog in self.client.iter_dialogs():
             if self._scan_halt:
@@ -1130,7 +890,6 @@ class GiveawaysMod(loader.Module):
                 dialogs.append(dialog)
                 state["total"] = len(dialogs)
                 state["current"] = dialog.name or str(dialog.id)
-        state["total"] = len(dialogs)
         state["current"] = ""
         limit = self.config["scan_history_limit"]
         for dialog in dialogs:
@@ -1153,85 +912,66 @@ class GiveawaysMod(loader.Module):
         ticker.cancel()
         if self._scan_closed:
             return
-        build = self._scan_card(state, "stopped" if self._scan_halt else "done")
+        phase = "stopped" if self._scan_halt else "done"
         form, self._scan_msg = self._scan_msg, None
         if form:
             try:
-                if self._scan_rich:
-                    await form.edit(rich_message=self._render(build(True), True), reply_markup=[[self._close_button()]])
-                else:
-                    await form.edit(self._render(build(False), False), reply_markup=[[self._close_button()]])
+                await form.edit(None, rich_html=self._scan_screen(state, phase), reply_markup=self._close_markup())
                 return
             except Exception as e:
                 logger.warning("Could not show the scan result in the form: %s", e)
+        card = self._scan_card(state, phase)
         try:
-            await self._say(message, build)
+            await self._say(message, card)
         except Exception as e:
             logger.warning("Could not edit the command message: %s", e)
-            await self.client.send_message(message.chat_id, self._render(build(False), False))
+            await self.client.send_message(message.chat_id, self._render(card, False))
 
-    @loader.command(
-        ru_doc="показать активные розыгрыши",
-        uk_doc="показати активні розіграші",
-        de_doc="aktive Gewinnspiele anzeigen",
-        ja_doc="進行中の企画を表示する",
-    )
+    @loader.command(ru_doc="показать активные розыгрыши")
     async def gwst(self, message: Message):
         """Show active giveaways"""
         s = self.strings
         now = time.time()
         active = sorted((r for r in self._giveaways.values() if r["until"] > now), key=lambda r: r["until"])
         if not active:
-            return await self._say(message, lambda rich: {"emoji": "info", "title": s["st_empty"]})
+            return await self._say(message, {"emoji": "info", "title": s["st_empty"]})
         await self._say(
             message,
-            lambda rich: {
+            {
                 "emoji": "bell",
                 "title": s["st_title"],
                 "lines": [s["st_count"].format(len(active))],
-                "items": [self._item(rec, rich) for rec in active],
+                "items": [self._item(rec) for rec in active],
             },
         )
 
-    @loader.command(
-        ru_doc="статистика: участия, победы и каналы",
-        uk_doc="статистика: участь, перемоги та канали",
-        de_doc="Statistik: Teilnahmen, Gewinne und Kanäle",
-        ja_doc="統計: 参加、当選、チャンネル",
-    )
+    @loader.command(ru_doc="статистика: участия, победы и каналы")
     async def gwstats(self, message: Message):
-        """Show statistics and history"""
+        """Show statistics"""
         s = self.strings
         now = time.time()
         records = list(self._giveaways.values())
         channels = list(self._channels.values())
-        wins = sum(1 for r in records if r.get("result") == "win")
-        active = sum(1 for r in records if r["until"] > now)
-        waiting = sum(1 for r in records if r["until"] <= now and not r.get("result"))
-        subscribed = sum(1 for c in channels if c.get("state") == "joined")
-        left = sum(1 for c in channels if c.get("state") == "left")
-
-        def build(rich: bool) -> dict:
-            card = {
+        await self._say(
+            message,
+            {
                 "emoji": "stats",
                 "title": s["stats_title"],
                 "rows": [
                     (s["stat_joined"], str(len(records))),
-                    (s["stat_wins"], str(wins)),
+                    (s["stat_wins"], str(sum(1 for r in records if r.get("result") == "win"))),
                     (s["stat_total"], str(len(channels))),
-                    (s["stat_now"], str(subscribed)),
-                    (s["stat_left"], str(left)),
-                    (s["stat_active"], str(active)),
-                    (s["stat_wait"], str(waiting)),
+                    (s["stat_now"], str(sum(1 for c in channels if c.get("state") == "joined"))),
+                    (s["stat_left"], str(sum(1 for c in channels if c.get("state") == "left"))),
+                    (s["stat_active"], str(sum(1 for r in records if r["until"] > now))),
+                    (s["stat_wait"], str(sum(1 for r in records if r["until"] <= now and not r.get("result")))),
                 ],
-            }
-            return card
-
-        await self._say(message, build)
+            },
+        )
 
     @loader.watcher("only_messages")
     async def watcher(self, message: Message):
-        if not self.get("enabled", False) or self._join_blocked():
+        if not self.get("enabled", False):
             return
         media = getattr(message, "media", None)
         if isinstance(media, MessageMediaGiveaway):
